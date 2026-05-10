@@ -38,6 +38,14 @@ class UserSerializer(serializers.ModelSerializer):
         model = User
         fields = ['id','username','email','role','org','created_at']
 
+class OrgMemberCreateSerializer(serializers.ModelSerializer):
+    password = serializers.CharField(write_only=True, min_length=6)
+    role = serializers.ChoiceField(choices=[('manager', 'Manager'), ('member', 'Member')], default='member')
+
+    class Meta:
+        model = User
+        fields = ['username', 'email', 'password', 'role']
+
 class TaskSerializer(serializers.ModelSerializer):
     assigned_by_name = serializers.SerializerMethodField()
     class Meta:

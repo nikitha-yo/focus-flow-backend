@@ -171,9 +171,37 @@ def dashboard_stats(request):
         'org': org_data,
     })
 
-@api_view(['GET'])
+@api_view(['GET', 'POST'])
+@permission_classes([IsAuthenticated])
 def org_members(request):
     if not request.user.org:
         return Response({'error':'Not part of an organisation'}, status=400)
-    members = User.objects.filter(org=request.user.org)
-    return Response(UserSerializer(members, many=True).data)
+
+    if request.method == 'GET':
+        members = User.objects.filter(org=request.user.org)
+        return Response(UserSerializer(members, many=True).data)
+
+    if request.user.role not in ['admin', 'manager']:
+        return Response({'error': 'Only admins and managers can add team members'}, status=403)
+
+    serializer = OrgMemberCreateSerializer(data=request.data)
+    if not serializer.is_valid():
+        return Response(serializer.errors, status=400)
+
+    data = serializer.validated_data
+    if User.objects.filter(email=data['email']).exists():
+        return Response({'error': 'Email already exists'}, status=400)
+    if User.objects.filter(username=data['username']).exists():
+        return Response({'error': 'Username already exists'}, status=400)
+
+    new_member = User(
+        username=data['username'],
+        email=data['email'],
+        role=data['role'],
+        org=request.user.org,
+    )
+    new_member.set_password(data['password'])
+    new_member.save()
+    Streak.objects.create(user=new_member)
+
+    return Response(UserSerializer(new_member).data, status=201)
