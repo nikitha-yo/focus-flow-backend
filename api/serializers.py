@@ -1,6 +1,9 @@
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
-from .models import Organisation, Task, FocusSession, Streak, Document, Meeting, Announcement, MoodLog
+from .models import (
+    Organisation, Task, FocusSession, Streak, Document, Meeting,
+    Announcement, MoodLog, RecurringTask,
+)
 
 User = get_user_model()
 
@@ -72,6 +75,21 @@ class StreakSerializer(serializers.ModelSerializer):
     class Meta:
         model = Streak
         fields = '__all__'
+
+
+class RecurringTaskSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = RecurringTask
+        fields = ['id', 'title', 'scheduled_days', 'is_active', 'created_at']
+        read_only_fields = ['id', 'created_at']
+
+    def validate_scheduled_days(self, value):
+        if not isinstance(value, list):
+            raise serializers.ValidationError('Scheduled days must be a list.')
+        normalized = sorted(set(value))
+        if not normalized or any(not isinstance(day, int) or day < 0 or day > 6 for day in normalized):
+            raise serializers.ValidationError('Choose at least one day between Sunday (0) and Saturday (6).')
+        return normalized
 
 
 class DocumentSerializer(serializers.ModelSerializer):

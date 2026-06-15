@@ -6,8 +6,11 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from django.contrib.auth import get_user_model
 from django.db.models import Q
 from django.utils import timezone
-from datetime import date
-from .models import Organisation, Task, FocusSession, Streak, Document, Email, Meeting, Announcement, MoodLog
+from datetime import date, timedelta
+from .models import (
+    Organisation, Task, FocusSession, Streak, Document, Email, Meeting,
+    Announcement, MoodLog, RecurringTask, RecurringTaskCompletion,
+)
 from .serializers import *
 
 User = get_user_model()
@@ -182,9 +185,197 @@ def dashboard_stats(request):
         'tasks': {'total':total,'completed':completed,'pending':pending,'completion_rate': round(completed/total*100 if total else 0,1)},
         'focus': {'total_sessions': sessions.count(), 'total_focus_mins': total_focus_mins},
         'streak': streak_data,
+        'weekly_task_progress': build_weekly_tracker_data(user, include_tasks=False)['metrics'],
         'org': org_data,
         'announcements': announcements_data,
     })
+
+
+DEFAULT_RECURRING_TASKS = [
+    'Read 10 pages',
+    'Exercise',
+    'Practice coding',
+    'Study for 30 minutes',
+    'Meditation',
+]
+
+
+def sunday_for(day):
+    return day - timedelta(days=(day.weekday() + 1) % 7)
+
+
+def completion_streaks(completed_dates, today):
+    completed_dates = {day for day in completed_dates if day <= today}
+    current = 0
+    cursor = today
+    while cursor in completed_dates:
+        current += 1
+        cursor -= timedelta(days=1)
+
+    longest = 0
+    running = 0
+    previous = None
+    for completed_day in sorted(completed_dates):
+        if previous and completed_day == previous + timedelta(days=1):
+            running += 1
+        else:
+            running = 1
+        longest = max(longest, running)
+        previous = completed_day
+    return current, longest
+
+
+def build_weekly_tracker_data(user, include_tasks=True):
+    today = timezone.localdate()
+    week_start = sunday_for(today)
+    week_end = week_start + timedelta(days=6)
+    trend_start = week_start - timedelta(weeks=3)
+    tasks = list(RecurringTask.objects.filter(user=user, is_active=True))
+    completions = RecurringTaskCompletion.objects.filter(
+        task__user=user,
+        completed_date__range=(trend_start, week_end),
+    ).select_related('task')
+    completion_lookup = {(item.task_id, item.completed_date) for item in completions}
+
+    days = []
+    scheduled_total = 0
+    completed_total = 0
+    productive_dates = set()
+    for offset in range(7):
+        day = week_start + timedelta(days=offset)
+        scheduled = sum(offset in task.scheduled_days for task in tasks)
+        completed = sum(
+            offset in task.scheduled_days and (task.id, day) in completion_lookup
+            for task in tasks
+        )
+        scheduled_total += scheduled
+        completed_total += completed
+        if completed:
+            productive_dates.add(day)
+        days.append({
+            'date': day.isoformat(),
+            'label': day.strftime('%a'),
+            'scheduled': scheduled,
+            'completed': completed,
+        })
+
+    all_completion_dates = set(
+        RecurringTaskCompletion.objects.filter(
+            task__user=user,
+            completed_date__lte=today,
+        ).values_list('completed_date', flat=True)
+    )
+    current_streak, longest_streak = completion_streaks(all_completion_dates, today)
+
+    trends = []
+    for week_offset in range(4):
+        trend_week_start = trend_start + timedelta(weeks=week_offset)
+        trend_completed = 0
+        trend_scheduled = 0
+        consistent_days = 0
+        for day_offset in range(7):
+            day = trend_week_start + timedelta(days=day_offset)
+            scheduled = sum(day_offset in task.scheduled_days and task.created_at.date() <= day for task in tasks)
+            completed = sum((task.id, day) in completion_lookup for task in tasks)
+            trend_scheduled += scheduled
+            trend_completed += completed
+            if scheduled and completed == scheduled:
+                consistent_days += 1
+        trends.append({
+            'week': trend_week_start.strftime('%b %d'),
+            'completed': trend_completed,
+            'consistency': round(consistent_days / 7 * 100, 1),
+            'completion_rate': round(trend_completed / trend_scheduled * 100, 1) if trend_scheduled else 0,
+        })
+
+    data = {
+        'week_start': week_start.isoformat(),
+        'week_end': week_end.isoformat(),
+        'today': today.isoformat(),
+        'days': days,
+        'metrics': {
+            'completion_rate': round(completed_total / scheduled_total * 100, 1) if scheduled_total else 0,
+            'productive_days': len(productive_dates),
+            'current_streak': current_streak,
+            'longest_streak': longest_streak,
+        },
+        'trends': trends,
+        'presets': DEFAULT_RECURRING_TASKS,
+    }
+    if include_tasks:
+        data['tasks'] = [
+            {
+                **RecurringTaskSerializer(task).data,
+                'completions': [
+                    day.isoformat()
+                    for day in (week_start + timedelta(days=offset) for offset in range(7))
+                    if (task.id, day) in completion_lookup
+                ],
+            }
+            for task in tasks
+        ]
+    return data
+
+
+@api_view(['GET', 'POST'])
+@permission_classes([IsAuthenticated])
+def weekly_tracker(request):
+    if request.method == 'GET':
+        return Response(build_weekly_tracker_data(request.user))
+
+    serializer = RecurringTaskSerializer(data=request.data)
+    if serializer.is_valid():
+        serializer.save(user=request.user)
+        return Response(build_weekly_tracker_data(request.user), status=status.HTTP_201_CREATED)
+    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+@api_view(['PATCH', 'DELETE'])
+@permission_classes([IsAuthenticated])
+def weekly_tracker_task(request, pk):
+    try:
+        task = RecurringTask.objects.get(pk=pk, user=request.user)
+    except RecurringTask.DoesNotExist:
+        return Response({'error': 'Recurring task not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+    if request.method == 'DELETE':
+        task.delete()
+        return Response(build_weekly_tracker_data(request.user))
+
+    serializer = RecurringTaskSerializer(task, data=request.data, partial=True)
+    if serializer.is_valid():
+        serializer.save()
+        return Response(build_weekly_tracker_data(request.user))
+    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def weekly_tracker_toggle(request, pk):
+    try:
+        task = RecurringTask.objects.get(pk=pk, user=request.user, is_active=True)
+    except RecurringTask.DoesNotExist:
+        return Response({'error': 'Recurring task not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+    try:
+        completed_date = date.fromisoformat(request.data.get('date', ''))
+    except ValueError:
+        return Response({'error': 'A valid completion date is required.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    week_start = sunday_for(timezone.localdate())
+    if completed_date < week_start or completed_date > week_start + timedelta(days=6):
+        return Response({'error': 'Only dates in the current week can be changed.'}, status=status.HTTP_400_BAD_REQUEST)
+    day_index = (completed_date - week_start).days
+    if day_index not in task.scheduled_days:
+        return Response({'error': 'This task is not scheduled for that day.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    completion, created = RecurringTaskCompletion.objects.get_or_create(
+        task=task,
+        completed_date=completed_date,
+    )
+    if not created:
+        completion.delete()
+    return Response(build_weekly_tracker_data(request.user))
 
 @api_view(['GET', 'POST'])
 @permission_classes([IsAuthenticated])

@@ -99,6 +99,35 @@ class Streak(models.Model):
     total_tasks_completed = models.IntegerField(default=0)
 
 
+class RecurringTask(models.Model):
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='recurring_tasks')
+    title = models.CharField(max_length=255)
+    scheduled_days = models.JSONField(default=list)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['created_at', 'id']
+
+    def __str__(self):
+        return self.title
+
+
+class RecurringTaskCompletion(models.Model):
+    task = models.ForeignKey(RecurringTask, on_delete=models.CASCADE, related_name='completions')
+    completed_date = models.DateField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=['task', 'completed_date'],
+                name='unique_recurring_task_completion',
+            )
+        ]
+        ordering = ['completed_date']
+
+
 class Document(models.Model):
     FILE_TYPES = [('pdf', 'PDF'), ('docx', 'DOCX'), ('xlsx', 'XLSX')]
     title = models.CharField(max_length=255)
