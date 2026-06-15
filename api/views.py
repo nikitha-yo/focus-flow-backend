@@ -4,9 +4,10 @@ from rest_framework.response import Response
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework_simplejwt.tokens import RefreshToken
 from django.contrib.auth import get_user_model
+from django.db.models import Q
 from django.utils import timezone
 from datetime import date
-from .models import Organisation, Task, FocusSession, MoodLog, Streak
+from .models import Organisation, Task, FocusSession, MoodLog, Streak, Document, Email, Meeting
 from .serializers import *
 
 User = get_user_model()
@@ -205,3 +206,47 @@ def org_members(request):
     Streak.objects.create(user=new_member)
 
     return Response(UserSerializer(new_member).data, status=201)
+
+
+class DocumentListCreateView(generics.ListCreateAPIView):
+    permission_classes = [IsAuthenticated]
+    serializer_class = DocumentSerializer
+
+    def get_queryset(self):
+        user = self.request.user
+        if not getattr(user, 'org_id', None):
+            return Document.objects.none()
+        return Document.objects.filter(uploaded_by__org=user.org).select_related('uploaded_by').order_by('-uploaded_at')
+
+    def perform_create(self, serializer):
+        serializer.save(uploaded_by=self.request.user)
+
+
+class EmailListCreateView(generics.ListCreateAPIView):
+    permission_classes = [IsAuthenticated]
+    serializer_class = EmailSerializer
+
+    def get_queryset(self):
+        user = self.request.user
+        if not getattr(user, 'org_id', None):
+            return Email.objects.none()
+        return Email.objects.filter(sender=user).prefetch_related('to', 'cc', 'attachments').order_by('-created_at')
+
+    def perform_create(self, serializer):
+        serializer.save(sender=self.request.user)
+
+
+class MeetingListCreateView(generics.ListCreateAPIView):
+    permission_classes = [IsAuthenticated]
+    serializer_class = MeetingSerializer
+
+    def get_queryset(self):
+        user = self.request.user
+        if not getattr(user, 'org_id', None):
+            return Meeting.objects.none()
+        return Meeting.objects.filter(
+            Q(created_by=user) | Q(participants=user)
+        ).distinct().select_related('created_by').prefetch_related('participants').order_by('-scheduled_at')
+
+    def perform_create(self, serializer):
+        serializer.save(created_by=self.request.user)

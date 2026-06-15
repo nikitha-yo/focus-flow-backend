@@ -85,3 +85,46 @@ class Streak(models.Model):
     last_active = models.DateField(null=True, blank=True)
     total_sessions = models.IntegerField(default=0)
     total_tasks_completed = models.IntegerField(default=0)
+
+
+class Document(models.Model):
+    FILE_TYPES = [('pdf', 'PDF'), ('docx', 'DOCX'), ('xlsx', 'XLSX')]
+    title = models.CharField(max_length=255)
+    file = models.FileField(upload_to='documents/')
+    uploaded_by = models.ForeignKey(User, on_delete=models.CASCADE, related_name='uploaded_documents')
+    uploaded_at = models.DateTimeField(auto_now_add=True)
+    file_type = models.CharField(max_length=10, choices=FILE_TYPES)
+
+    def __str__(self):
+        return self.title
+
+
+class Email(models.Model):
+    STATUS = [('sent', 'Sent'), ('draft', 'Draft')]
+    sender = models.ForeignKey(User, on_delete=models.CASCADE, related_name='sent_emails')
+    to = models.ManyToManyField(User, related_name='received_emails')
+    cc = models.ManyToManyField(User, related_name='cc_emails', blank=True)
+    subject = models.CharField(max_length=255)
+    body = models.TextField()
+    status = models.CharField(max_length=10, choices=STATUS, default='sent')
+    attachments = models.ManyToManyField(Document, blank=True, related_name='emails')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return self.subject
+
+
+class Meeting(models.Model):
+    PLATFORMS = [('meet', 'Google Meet'), ('zoom', 'Zoom'), ('teams', 'Microsoft Teams')]
+    title = models.CharField(max_length=255)
+    platform = models.CharField(max_length=10, choices=PLATFORMS)
+    scheduled_at = models.DateTimeField()
+    duration_minutes = models.IntegerField()
+    participants = models.ManyToManyField(User, related_name='meetings')
+    agenda = models.TextField(blank=True)
+    meeting_link = models.URLField(blank=True)
+    created_by = models.ForeignKey(User, on_delete=models.CASCADE, related_name='created_meetings')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return self.title
