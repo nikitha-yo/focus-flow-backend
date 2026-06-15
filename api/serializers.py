@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
-from .models import Organisation, Task, FocusSession, MoodLog, Streak, Document, Email, Meeting
+from .models import Organisation, Task, FocusSession, MoodLog, Streak, Document, Meeting
 
 User = get_user_model()
 
@@ -114,71 +114,6 @@ class DocumentSerializer(serializers.ModelSerializer):
         if name.endswith('.pdf') or name.endswith('.docx') or name.endswith('.xlsx'):
             return value
         raise serializers.ValidationError('Allowed types: .pdf, .docx, .xlsx')
-
-
-class EmailSerializer(serializers.ModelSerializer):
-    to = serializers.PrimaryKeyRelatedField(queryset=User.objects.all(), many=True)
-    cc = serializers.PrimaryKeyRelatedField(queryset=User.objects.all(), many=True, required=False)
-    attachments = serializers.PrimaryKeyRelatedField(queryset=Document.objects.all(), many=True, required=False)
-
-    class Meta:
-        model = Email
-        fields = ['id', 'sender', 'to', 'cc', 'subject', 'body', 'status', 'attachments', 'created_at']
-        read_only_fields = ['id', 'sender', 'created_at']
-
-    def _org(self):
-        return self.context['request'].user.org
-
-    def validate_to(self, users):
-        if not users:
-            return users
-        org = self._org()
-        if not org:
-            raise serializers.ValidationError('Organisation users only.')
-        for u in users:
-            if u.org_id != org.id:
-                raise serializers.ValidationError('All recipients must be in your organisation.')
-        return users
-
-    def validate_cc(self, users):
-        if not users:
-            return users
-        org = self._org()
-        if not org:
-            raise serializers.ValidationError('Organisation users only.')
-        for u in users:
-            if u.org_id != org.id:
-                raise serializers.ValidationError('All CC recipients must be in your organisation.')
-        return users
-
-    def validate_attachments(self, docs):
-        if not docs:
-            return docs
-        org = self._org()
-        if not org:
-            raise serializers.ValidationError('Organisation account required.')
-        for d in docs:
-            if d.uploaded_by.org_id != org.id:
-                raise serializers.ValidationError('Invalid attachment.')
-        return docs
-
-    def validate(self, attrs):
-        req = self.context['request'].user
-        if not getattr(req, 'org_id', None):
-            raise serializers.ValidationError('Organisation account required.')
-        if attrs.get('status', 'sent') == 'sent' and not attrs.get('to'):
-            raise serializers.ValidationError({'to': 'Add at least one recipient to send.'})
-        return attrs
-
-    def create(self, validated_data):
-        to_users = validated_data.pop('to')
-        cc_users = validated_data.pop('cc', [])
-        attachments = validated_data.pop('attachments', [])
-        email = Email.objects.create(**validated_data)
-        email.to.set(to_users)
-        email.cc.set(cc_users)
-        email.attachments.set(attachments)
-        return email
 
 
 class MeetingSerializer(serializers.ModelSerializer):

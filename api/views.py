@@ -222,20 +222,6 @@ class DocumentListCreateView(generics.ListCreateAPIView):
         serializer.save(uploaded_by=self.request.user)
 
 
-class EmailListCreateView(generics.ListCreateAPIView):
-    permission_classes = [IsAuthenticated]
-    serializer_class = EmailSerializer
-
-    def get_queryset(self):
-        user = self.request.user
-        if not getattr(user, 'org_id', None):
-            return Email.objects.none()
-        return Email.objects.filter(sender=user).prefetch_related('to', 'cc', 'attachments').order_by('-created_at')
-
-    def perform_create(self, serializer):
-        serializer.save(sender=self.request.user)
-
-
 class MeetingListCreateView(generics.ListCreateAPIView):
     permission_classes = [IsAuthenticated]
     serializer_class = MeetingSerializer

@@ -16,7 +16,6 @@ urlpatterns = [
     path('org/members/', views.org_members),
     path('members/', views.org_members),
     path('documents/', views.DocumentListCreateView.as_view()),
-    path('emails/', views.EmailListCreateView.as_view()),
     path('meetings/', views.MeetingListCreateView.as_view()),
     path('', include(router.urls)),
 ]
