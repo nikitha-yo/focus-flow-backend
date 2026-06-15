@@ -63,20 +63,32 @@ class Task(models.Model):
         return self.title
 
 class FocusSession(models.Model):
+    MOOD_CHOICES = [
+        ('focused', 'Focused'),
+        ('energized', 'Energized'),
+        ('tired', 'Tired'),
+        ('stressed', 'Stressed'),
+    ]
+    
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='focus_sessions')
     start_time = models.DateTimeField(auto_now_add=True)
     duration_mins = models.IntegerField(default=25)
     task_label = models.CharField(max_length=200, blank=True)
+    mood = models.CharField(max_length=20, choices=MOOD_CHOICES, null=True, blank=True)
     distractions = models.IntegerField(default=0)
     completed = models.BooleanField(default=False)
 
+
 class MoodLog(models.Model):
-    MOODS = [('energized','Energized'),('focused','Focused'),('tired','Tired'),('stressed','Stressed'),('happy','Happy')]
+    """Separate mood logging for the Mood page (with energy level tracking)"""
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='mood_logs')
-    mood = models.CharField(max_length=50, choices=MOODS)
+    mood = models.CharField(max_length=50)
     energy_level = models.IntegerField(default=3)
     recommendation = models.TextField(blank=True)
     logged_at = models.DateTimeField(auto_now_add=True)
+    
+    def __str__(self):
+        return f"{self.user} - {self.mood}"
 
 class Streak(models.Model):
     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='streak')
@@ -125,6 +137,27 @@ class Meeting(models.Model):
     meeting_link = models.URLField(blank=True)
     created_by = models.ForeignKey(User, on_delete=models.CASCADE, related_name='created_meetings')
     created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return self.title
+
+
+class Announcement(models.Model):
+    PRIORITY_CHOICES = [('high', 'High'), ('medium', 'Medium'), ('low', 'Low')]
+    ANNOUNCEMENT_TYPE = [('announcement', 'Announcement'), ('meeting', 'Meeting')]
+    
+    org = models.ForeignKey(Organisation, on_delete=models.CASCADE, related_name='announcements')
+    title = models.CharField(max_length=255)
+    message = models.TextField()
+    priority = models.CharField(max_length=10, choices=PRIORITY_CHOICES, default='medium')
+    announcement_type = models.CharField(max_length=20, choices=ANNOUNCEMENT_TYPE, default='announcement')
+    created_by = models.ForeignKey(User, on_delete=models.CASCADE, related_name='created_announcements')
+    created_at = models.DateTimeField(auto_now_add=True)
+    expiry_date = models.DateTimeField(null=True, blank=True)
+    meeting = models.OneToOneField(Meeting, null=True, blank=True, on_delete=models.SET_NULL, related_name='announcement')
+
+    class Meta:
+        ordering = ['-created_at']
 
     def __str__(self):
         return self.title

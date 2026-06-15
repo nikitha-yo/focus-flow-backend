@@ -5,7 +5,7 @@ from . import views
 router = DefaultRouter()
 router.register(r'tasks', views.TaskViewSet, basename='task')
 router.register(r'focus-sessions', views.FocusSessionViewSet, basename='focus')
-router.register(r'mood-logs', views.MoodLogViewSet, basename='mood')
+router.register(r'mood-logs', views.MoodLogViewSet, basename='mood-log')
 
 urlpatterns = [
     path('auth/register/', views.register),
@@ -17,5 +17,7 @@ urlpatterns = [
     path('members/', views.org_members),
     path('documents/', views.DocumentListCreateView.as_view()),
     path('meetings/', views.MeetingListCreateView.as_view()),
+    path('announcements/', views.AnnouncementListCreateView.as_view()),
+    path('announcements/<int:pk>/', views.AnnouncementDetailView.as_view()),
     path('', include(router.urls)),
 ]

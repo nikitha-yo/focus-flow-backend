@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
-from .models import Organisation, Task, FocusSession, MoodLog, Streak, Document, Meeting
+from .models import Organisation, Task, FocusSession, Streak, Document, Meeting, Announcement, MoodLog
 
 User = get_user_model()
 
@@ -141,3 +141,20 @@ class MeetingSerializer(serializers.ModelSerializer):
         meeting = Meeting.objects.create(**validated_data)
         meeting.participants.set(participant_users)
         return meeting
+
+
+class AnnouncementSerializer(serializers.ModelSerializer):
+    created_by_name = serializers.CharField(source='created_by.username', read_only=True)
+    created_by_avatar = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Announcement
+        fields = [
+            'id', 'title', 'message', 'priority', 'announcement_type', 
+            'created_by', 'created_by_name', 'created_by_avatar', 'created_at', 
+            'expiry_date', 'meeting', 'org'
+        ]
+        read_only_fields = ['id', 'created_by', 'created_at', 'org']
+
+    def get_created_by_avatar(self, obj):
+        return obj.created_by.username[0].upper() if obj.created_by.username else 'A'

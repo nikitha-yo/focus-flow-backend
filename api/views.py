@@ -7,18 +7,10 @@ from django.contrib.auth import get_user_model
 from django.db.models import Q
 from django.utils import timezone
 from datetime import date
-from .models import Organisation, Task, FocusSession, MoodLog, Streak, Document, Email, Meeting
+from .models import Organisation, Task, FocusSession, Streak, Document, Email, Meeting, Announcement, MoodLog
 from .serializers import *
 
 User = get_user_model()
-
-MOOD_RECOMMENDATIONS = {
-    'energized': 'Great energy! Tackle your hardest tasks now. Try deep work sessions of 50 mins.',
-    'focused': 'You are in the zone! Use Pomodoro 25-min sprints to maximize output.',
-    'tired': 'Take it easy. Light tasks only. Consider a 10-min power nap before starting.',
-    'stressed': 'Start with a 5-min breathing exercise. Then tackle one small task at a time.',
-    'happy': 'Use this positive mood for creative tasks or tasks you have been avoiding!',
-}
 
 @api_view(['POST'])
 @permission_classes([AllowAny])
@@ -132,9 +124,25 @@ class MoodLogViewSet(viewsets.ModelViewSet):
         return MoodLog.objects.filter(user=self.request.user).order_by('-logged_at')
 
     def perform_create(self, serializer):
-        mood = serializer.validated_data.get('mood','focused')
-        rec = MOOD_RECOMMENDATIONS.get(mood, '')
-        serializer.save(user=self.request.user, recommendation=rec)
+        mood = serializer.validated_data.get('mood', '')
+        energy = serializer.validated_data.get('energy_level', 3)
+        
+        # Generate simple recommendations based on mood and energy
+        recommendations = {
+            'energized': "You're full of energy! This is a great time for deep focus work. Consider tackling your most challenging task now.",
+            'focused': "Your focus is sharp. Perfect time to dive into important work. Set a 25-min Pomodoro and minimize distractions.",
+            'happy': "You're in a great mood! Channel this positive energy into collaborative work or creative tasks.",
+            'tired': "You're feeling tired. Try a short break, drink some water, or do light tasks. Consider a 5-min power nap if possible.",
+            'stressed': "You're stressed. Take a few deep breaths. Try a quick 5-minute meditation or breathing exercise before working.",
+        }
+        
+        recommendation = recommendations.get(mood, f"You're feeling {mood}. Take care of yourself!")
+        if energy <= 2:
+            recommendation += " Consider taking a break soon."
+        elif energy == 5:
+            recommendation += " Keep up this momentum!"
+        
+        serializer.save(user=self.request.user, recommendation=recommendation)
 
 @api_view(['GET'])
 def dashboard_stats(request):
@@ -151,10 +159,9 @@ def dashboard_stats(request):
     except:
         streak_data = {'current_streak':0,'longest_streak':0,'total_sessions':0,'total_tasks_completed':0}
     
-    last_mood = MoodLog.objects.filter(user=user).order_by('-logged_at').first()
-    
     # org stats for admin/manager
     org_data = {}
+    announcements_data = []
     if user.role in ['admin','manager'] and user.org:
         org_tasks = Task.objects.filter(org=user.org)
         members = User.objects.filter(org=user.org)
@@ -163,13 +170,20 @@ def dashboard_stats(request):
             'org_tasks_total': org_tasks.count(),
             'org_tasks_completed': org_tasks.filter(status='completed').count(),
         }
+        # Get latest 3 announcements
+        latest_announcements = Announcement.objects.filter(org=user.org).order_by('-created_at')[:3]
+        announcements_data = AnnouncementSerializer(latest_announcements, many=True).data
+    elif user.org:
+        # Members can also see announcements
+        latest_announcements = Announcement.objects.filter(org=user.org).order_by('-created_at')[:3]
+        announcements_data = AnnouncementSerializer(latest_announcements, many=True).data
 
     return Response({
         'tasks': {'total':total,'completed':completed,'pending':pending,'completion_rate': round(completed/total*100 if total else 0,1)},
         'focus': {'total_sessions': sessions.count(), 'total_focus_mins': total_focus_mins},
         'streak': streak_data,
-        'last_mood': MoodLogSerializer(last_mood).data if last_mood else None,
         'org': org_data,
+        'announcements': announcements_data,
     })
 
 @api_view(['GET', 'POST'])
@@ -235,4 +249,73 @@ class MeetingListCreateView(generics.ListCreateAPIView):
         ).distinct().select_related('created_by').prefetch_related('participants').order_by('-scheduled_at')
 
     def perform_create(self, serializer):
-        serializer.save(created_by=self.request.user)
+        meeting = serializer.save(created_by=self.request.user)
+        # Automatically create an announcement for the meeting
+        if self.request.user.org:
+            platform_names = {
+                'meet': 'Google Meet',
+                'zoom': 'Zoom',
+                'teams': 'Microsoft Teams'
+            }
+            platform_name = platform_names.get(meeting.platform, meeting.platform)
+            
+            # Format the message with meeting details
+            participants_list = ', '.join([p.username for p in meeting.participants.all()])
+            message = f"""
+Platform: {platform_name}
+Date: {meeting.scheduled_at.strftime('%Y-%m-%d')}
+Time: {meeting.scheduled_at.strftime('%H:%M')}
+Duration: {meeting.duration_minutes} minutes
+Participants: {participants_list}
+Agenda: {meeting.agenda or 'No agenda'}
+Meeting Link: {meeting.meeting_link}
+"""
+            Announcement.objects.create(
+                org=self.request.user.org,
+                title=f"Meeting: {meeting.title}",
+                message=message.strip(),
+                priority='high',
+                announcement_type='meeting',
+                created_by=self.request.user,
+                meeting=meeting
+            )
+
+
+class AnnouncementListCreateView(generics.ListCreateAPIView):
+    permission_classes = [IsAuthenticated]
+    serializer_class = AnnouncementSerializer
+
+    def get_queryset(self):
+        user = self.request.user
+        if not getattr(user, 'org_id', None):
+            return Announcement.objects.none()
+        # Filter expired announcements
+        return Announcement.objects.filter(
+            org=user.org
+        ).select_related('created_by', 'meeting').order_by('-created_at')
+
+    def perform_create(self, serializer):
+        if self.request.user.role not in ['admin', 'manager']:
+            return Response({'error': 'Only admins and managers can create announcements'}, status=status.HTTP_403_FORBIDDEN)
+        serializer.save(org=self.request.user.org, created_by=self.request.user)
+
+
+class AnnouncementDetailView(generics.RetrieveUpdateDestroyAPIView):
+    permission_classes = [IsAuthenticated]
+    serializer_class = AnnouncementSerializer
+
+    def get_queryset(self):
+        user = self.request.user
+        if not getattr(user, 'org_id', None):
+            return Announcement.objects.none()
+        return Announcement.objects.filter(org=user.org).select_related('created_by', 'meeting')
+
+    def perform_update(self, serializer):
+        if self.request.user.role not in ['admin', 'manager']:
+            return Response({'error': 'Only admins and managers can update announcements'}, status=status.HTTP_403_FORBIDDEN)
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        if self.request.user.role not in ['admin', 'manager']:
+            return Response({'error': 'Only admins and managers can delete announcements'}, status=status.HTTP_403_FORBIDDEN)
+        instance.delete()
